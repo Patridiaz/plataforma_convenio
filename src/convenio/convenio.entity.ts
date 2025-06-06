@@ -6,6 +6,8 @@ import { Indicador } from 'src/indicador/indicador.entity';
 import { ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CreateIndicadorDto } from 'src/indicador/dto/create-indicador.dto';
+import { Dimension } from 'src/dimension/dimension.entity';
+import { LineaTrabajo } from 'src/linea-trabajo/linea-trabajo.entity';
 
 @Entity()
 export class Convenio {
@@ -35,4 +37,11 @@ export class Convenio {
   
   @OneToMany(() => Indicador, indicador => indicador.convenio, { cascade: true })
   indicadores: Indicador[];
+
+  @OneToMany(() => Dimension, dimension => dimension.convenio, { cascade: true, eager: true })
+  dimensiones: Dimension[];
+
+  @ManyToOne(() => LineaTrabajo)
+  lineaTrabajo: LineaTrabajo;
+
 }

@@ -19,6 +19,8 @@ import { Tarea } from './tarea/tarea.entity';
 import { LineaTrabajo } from './linea-trabajo/linea-trabajo.entity';
 import { Convenio } from './convenio/convenio.entity';
 import { Indicador } from './indicador/indicador.entity';
+import { DimensionModule } from './dimension/dimension.module';
+import { Dimension } from './dimension/dimension.entity';
 
 @Module({
   imports: [
@@ -44,6 +46,7 @@ import { Indicador } from './indicador/indicador.entity';
         LineaTrabajo,
         Convenio,
         Indicador,
+        Dimension,
       ]
     }),
     AuthModule,
@@ -56,6 +59,7 @@ import { Indicador } from './indicador/indicador.entity';
     ArchivoModule,
     SharedModule,
     LineaTrabajoModule,
+    DimensionModule,
   ],
   controllers: [AppController],
   providers: [AppService],

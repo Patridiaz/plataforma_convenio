@@ -1,5 +1,5 @@
 // src/indicador/dto/create-indicador.dto.ts
-import { IsString, ValidateNested, IsArray, IsOptional } from 'class-validator';
+import { IsString, ValidateNested, IsArray, IsOptional, IsNumber } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CreateTareaDto } from 'src/tarea/dto/create-tarea.dto';
 import { ManyToOne } from 'typeorm';
@@ -12,9 +12,8 @@ export class CreateIndicadorDto {
   @IsString()
   descripcion: string;
 
-  
-  @IsString()  // Aquí debe coincidir el tipo de lineaTrabajo, si usas enum, cambiar acorde
-  lineaTrabajo: string;
+  @IsNumber()
+  lineaTrabajoId: number;  // ID de la relación
 
   @IsArray()
   @ValidateNested({ each: true })
