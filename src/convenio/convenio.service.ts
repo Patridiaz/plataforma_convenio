@@ -1,5 +1,5 @@
 // src/convenio/convenio.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Convenio } from './convenio.entity';
 import { Repository } from 'typeorm';
@@ -33,7 +33,12 @@ async create(dto: CreateConvenioDto, usuarioId: number) {
     where: { id: usuarioId },
     relations: ['establecimiento'],
   });
-  if (!usuario) throw new NotFoundException('Usuario no encontrado');
+
+  if (!usuario || usuario.rol !== 'Director Establecimiento') {
+    throw new ForbiddenException('Solo un Director puede crear convenios');
+  }
+
+  const establecimiento = usuario.establecimiento;
 
   const convenio = this.repo.create({
     titulo: dto.titulo,
@@ -42,70 +47,86 @@ async create(dto: CreateConvenioDto, usuarioId: number) {
     fechaFin: dto.fechaFin,
     activo: dto.activo,
     creadoPor: usuario,
-    establecimiento: usuario.establecimiento,
+    establecimiento,
   });
 
-if (dto.dimensiones?.length) {
-  convenio.dimensiones = await Promise.all(dto.dimensiones.map(async dimDto => {
-    const dimension = new Dimension();
-    dimension.nombre = dimDto.nombre;
-    dimension.ponderacion = dimDto.ponderacion;
-
-    dimension.indicadores = await Promise.all(dimDto.indicadores.map(async ind => {
-      const indicador = new Indicador();
-      indicador.nombre = ind.nombre;
-      indicador.descripcion = ind.descripcion;
-
-      let lineaTrabajoEntity = await this.lineaTrabajoRepo.findOne({
-        where: { nombre: ind.lineaTrabajo }
-      });
-
-      if (!lineaTrabajoEntity) {
-        lineaTrabajoEntity = this.lineaTrabajoRepo.create({
-          nombre: ind.lineaTrabajo,
-          descripcion: ind.lineaTrabajo || 'Generado automáticamente', // ✅ fix
-        });
-        await this.lineaTrabajoRepo.save(lineaTrabajoEntity);
+  // Solo mapear dimensiones si vienen y tienen elementos
+  if (dto.dimensiones?.length) {
+    convenio.dimensiones = await Promise.all(dto.dimensiones.map(async (dimDto) => {
+      if (!dimDto.nombre) {
+        throw new BadRequestException('La dimensión debe tener un nombre');
+      }
+      if (dimDto.ponderacion === undefined || dimDto.ponderacion === null) {
+        throw new BadRequestException('La dimensión debe tener una ponderación');
       }
 
-      indicador.lineaTrabajo = lineaTrabajoEntity;
-      indicador.tareas = ind.tareas.map(t => Object.assign(new Tarea(), t));
-      return indicador;
+      const dimension = new Dimension();
+      dimension.nombre = dimDto.nombre;
+      dimension.ponderacion = dimDto.ponderacion;
+
+      // Buscar responsable si viene en el DTO y no es null/undefined
+      if (dimDto.responsableId != null) {
+        const responsable = await this.usuarioRepo.findOne({
+          where: {
+            id: dimDto.responsableId,
+            establecimiento: { id: establecimiento.id },
+            rol: 'Gestion Establecimiento',
+          },
+          relations: ['establecimiento'],
+        });
+
+        if (!responsable) {
+          throw new BadRequestException(`Responsable inválido para la dimensión ${dimDto.nombre}`);
+        }
+        dimension.responsable = responsable;
+      }
+
+      // Mapear indicadores solo si existen
+      if (dimDto.indicadores?.length) {
+        dimension.indicadores = await Promise.all(dimDto.indicadores.map(async ind => {
+          if (!ind.nombre) {
+            throw new BadRequestException('El indicador debe tener un nombre');
+          }
+          if (!ind.lineaTrabajo) {
+            throw new BadRequestException('El indicador debe tener línea de trabajo');
+          }
+
+          const indicador = new Indicador();
+          indicador.nombre = ind.nombre;
+          indicador.descripcion = ind.descripcion ?? '';
+
+          let lineaTrabajoEntity = await this.lineaTrabajoRepo.findOne({ where: { nombre: ind.lineaTrabajo } });
+          if (!lineaTrabajoEntity) {
+            lineaTrabajoEntity = this.lineaTrabajoRepo.create({
+              nombre: ind.lineaTrabajo,
+              descripcion: ind.lineaTrabajo || 'Generado automáticamente',
+            });
+            await this.lineaTrabajoRepo.save(lineaTrabajoEntity);
+          }
+          indicador.lineaTrabajo = lineaTrabajoEntity;
+
+          // Mapear tareas solo si existen
+          if (ind.tareas?.length) {
+            indicador.tareas = ind.tareas.map(t => Object.assign(new Tarea(), t));
+          } else {
+            indicador.tareas = [];
+          }
+
+          return indicador;
+        }));
+      } else {
+        dimension.indicadores = [];
+      }
+
+      return dimension;
     }));
-
-    return dimension;
-  }));
-}
-
-  // 1. Guardar
-  const saved = await this.repo.save(convenio);
-
-  // 2. Reconsultar con relaciones
-  const loaded = await this.repo.findOne({
-    where: { id: saved.id },
-    relations: [
-      'creadoPor',
-      'establecimiento',
-      'dimensiones',
-      'dimensiones.indicadores',
-      'dimensiones.indicadores.tareas',
-    ],
-  });
-
-  // 3. Eliminar referencias circulares
-  loaded?.dimensiones?.forEach(dimension => {
-    delete (dimension as any).convenio;
-    dimension.indicadores?.forEach(indicador => {
-      delete (indicador as any).dimension;
-      indicador.tareas?.forEach(tarea => {
-        delete (tarea as any).indicador;
-      });
-    });
-  });
-
-  return loaded;
+  } else {
+    convenio.dimensiones = [];
   }
 
+  const saved = await this.repo.save(convenio);
+  return this.findOne(saved.id);
+}
 
   // convenio.service.ts
   findAll() {
@@ -124,7 +145,8 @@ if (dto.dimensiones?.length) {
         'dimensiones',
         'dimensiones.indicadores',
         'dimensiones.indicadores.tareas',
-        'dimensiones.indicadores.lineaTrabajo' 
+        'dimensiones.indicadores.lineaTrabajo',
+        'dimensiones.responsable',
       ],
     });
 
@@ -133,76 +155,130 @@ if (dto.dimensiones?.length) {
   }
 
 
-async update(id: number, dto: UpdateConvenioDto) {
+async update(id: number, dto: UpdateConvenioDto, usuarioId: number) {
   const convenio = await this.repo.findOne({
     where: { id },
     relations: [
       'creadoPor',
       'establecimiento',
       'dimensiones',
-      'dimensiones.indicadores',
-      'dimensiones.indicadores.tareas',
+      'dimensiones.responsable',
     ],
   });
 
-  if (!convenio) {
-    throw new NotFoundException('Convenio no encontrado');
+  if (!convenio) throw new NotFoundException('Convenio no encontrado');
+
+  // Buscar usuario que intenta editar
+  const usuario = await this.usuarioRepo.findOne({
+    where: { id: usuarioId },
+    relations: ['establecimiento'],
+  });
+
+  if (!usuario) throw new ForbiddenException('Usuario no encontrado');
+
+  const isDirector = convenio.creadoPor.id === usuarioId;
+  const isResponsableAsignado = convenio.dimensiones.some(
+    (dim) => dim.responsable?.id === usuarioId
+  );
+
+  if (!isDirector && !(usuario.rol === 'Gestion Establecimiento' && isResponsableAsignado)) {
+    throw new ForbiddenException('No tienes permisos para editar este convenio');
   }
 
-  // Solo actualizamos campos definidos en dto
+  // Actualizar campos si están definidos en dto
   if (dto.titulo !== undefined) convenio.titulo = dto.titulo;
   if (dto.descripcion !== undefined) convenio.descripcion = dto.descripcion;
   if (dto.fechaInicio !== undefined) convenio.fechaInicio = new Date(dto.fechaInicio);
   if (dto.fechaFin !== undefined) convenio.fechaFin = new Date(dto.fechaFin);
   if (dto.activo !== undefined) convenio.activo = dto.activo;
 
-  // Si vienen nuevas dimensiones, reemplazar completamente
-if (dto.dimensiones) {
-  const dimensiones = await Promise.all(dto.dimensiones.map(async dimDto => {
-    const dimension = new Dimension();
-    dimension.nombre = dimDto.nombre;
-    dimension.ponderacion = dimDto.ponderacion;
-
-    dimension.indicadores = await Promise.all(dimDto.indicadores.map(async indDto => {
-      const indicador = new Indicador();
-      indicador.nombre = indDto.nombre;
-      indicador.descripcion = indDto.descripcion;
-
-      // Buscar o crear lineaTrabajo
-      let lineaTrabajo = await this.lineaTrabajoRepo.findOne({ where: { nombre: indDto.lineaTrabajo } });
-      if (!lineaTrabajo) {
-        lineaTrabajo = this.lineaTrabajoRepo.create({
-          nombre: indDto.lineaTrabajo,
-          descripcion: indDto.lineaTrabajo || 'Generado automáticamente', // ✅ fix
-        });
-        await this.lineaTrabajoRepo.save(lineaTrabajo);
+  // Reemplazar dimensiones si vienen en dto
+  if (dto.dimensiones) {
+    const dimensiones = await Promise.all(dto.dimensiones.map(async dimDto => {
+      if (!dimDto.nombre) {
+        throw new BadRequestException('La dimensión debe tener un nombre');
+      }
+      if (dimDto.ponderacion === undefined || dimDto.ponderacion === null) {
+        throw new BadRequestException('La dimensión debe tener una ponderación');
       }
 
-      indicador.lineaTrabajo = lineaTrabajo;
-      indicador.tareas = indDto.tareas.map(t => Object.assign(new Tarea(), t));
-      return indicador;
+      const dimension = new Dimension();
+      dimension.nombre = dimDto.nombre;
+      dimension.ponderacion = dimDto.ponderacion;
+
+      // Buscar responsable si responsableId está presente y no es null
+      if (dimDto.responsableId != null) {
+        const responsable = await this.usuarioRepo.findOne({
+          where: {
+            id: dimDto.responsableId,
+            establecimiento: { id: convenio.establecimiento.id },
+            rol: 'Gestion Establecimiento',
+          },
+          relations: ['establecimiento'],
+        });
+        if (!responsable) {
+          throw new BadRequestException(`Responsable inválido para la dimensión ${dimDto.nombre}`);
+        }
+        dimension.responsable = responsable;
+      }
+
+      // Mapear indicadores solo si vienen
+      if (dimDto.indicadores?.length) {
+        dimension.indicadores = await Promise.all(dimDto.indicadores.map(async indDto => {
+          if (!indDto.nombre) {
+            throw new BadRequestException('El indicador debe tener un nombre');
+          }
+          if (!indDto.lineaTrabajo) {
+            throw new BadRequestException('El indicador debe tener línea de trabajo');
+          }
+
+          const indicador = new Indicador();
+          indicador.nombre = indDto.nombre;
+          indicador.descripcion = indDto.descripcion ?? '';
+
+          let lineaTrabajo = await this.lineaTrabajoRepo.findOne({ where: { nombre: indDto.lineaTrabajo } });
+          if (!lineaTrabajo) {
+            lineaTrabajo = this.lineaTrabajoRepo.create({
+              nombre: indDto.lineaTrabajo,
+              descripcion: indDto.lineaTrabajo || 'Generado automáticamente',
+            });
+            await this.lineaTrabajoRepo.save(lineaTrabajo);
+          }
+
+          indicador.lineaTrabajo = lineaTrabajo;
+
+          indicador.tareas = indDto.tareas?.length
+            ? indDto.tareas.map(t => Object.assign(new Tarea(), t))
+            : [];
+
+          return indicador;
+        }));
+      } else {
+        dimension.indicadores = [];
+      }
+
+      return dimension;
     }));
 
-    return dimension;
-  }));
-
-  convenio.dimensiones = dimensiones; // asegúrate de reemplazar las dimensiones antiguas
-}
+    convenio.dimensiones = dimensiones;
+  }
 
   const saved = await this.repo.save(convenio);
 
-  // Reconsultar para obtener todo con relaciones
+  // Recargar con relaciones completas
   const updated = await this.repo.findOne({
     where: { id: saved.id },
     relations: [
       'creadoPor',
       'establecimiento',
       'dimensiones',
+      'dimensiones.responsable',
       'dimensiones.indicadores',
       'dimensiones.indicadores.tareas',
     ],
   });
 
+  // Limpiar referencias circulares para la respuesta
   updated?.dimensiones?.forEach(dimension => {
     delete (dimension as any).convenio;
     dimension.indicadores?.forEach(indicador => {
@@ -236,33 +312,45 @@ async addDimension(convenioId: number, dto: CreateDimensionDto) {
 }
 
 
-async addIndicador(dimensionId: number, dto: CreateIndicadorDto) {
+async addIndicador(dimensionId: number, dto: CreateIndicadorDto, userId: number) {
   const dimension = await this.dimensionRepo.findOne({
     where: { id: dimensionId },
-    relations: ['indicadores'],
+    relations: ['indicadores', 'responsable', 'convenio', 'convenio.creadoPor'],
   });
-  if (!dimension) throw new NotFoundException('Dimensión no encontrada');
 
-  // Buscar o crear LineaTrabajo a partir del nombre (string)
+  if (!dimension) {
+    throw new NotFoundException('Dimensión no encontrada');
+  }
+
+  const isResponsable = dimension.responsable?.id === userId;
+  const isDirector = dimension.convenio?.creadoPor?.id === userId;
+
+  if (!isResponsable && !isDirector) {
+    throw new ForbiddenException('No tienes permisos para agregar indicadores en esta dimensión');
+  }
+
+  // Buscar o crear línea de trabajo
   let lineaTrabajo = await this.lineaTrabajoRepo.findOne({ where: { nombre: dto.lineaTrabajo } });
   if (!lineaTrabajo) {
-    lineaTrabajo = this.lineaTrabajoRepo.create({ 
-      nombre: dto.lineaTrabajo, 
-      descripcion: dto.lineaTrabajo || 'Generado automáticamente'
-}); 
+    lineaTrabajo = this.lineaTrabajoRepo.create({
+      nombre: dto.lineaTrabajo,
+      descripcion: dto.lineaTrabajo || 'Generado automáticamente',
+    });
     await this.lineaTrabajoRepo.save(lineaTrabajo);
   }
 
   const indicador = this.indicadorRepo.create({
     nombre: dto.nombre,
     descripcion: dto.descripcion,
-    lineaTrabajo: lineaTrabajo, // ✅ ahora sí es un objeto, no un string
-    dimension: dimension,
-    tareas: dto.tareas.map(t => Object.assign(new Tarea(), t)),
+    lineaTrabajo,
+    dimension,
+    tareas: dto.tareas?.map(t => Object.assign(new Tarea(), t)),
   });
 
   return this.indicadorRepo.save(indicador);
 }
+
+
 
 
   async addTarea(indicadorId: number, dto: CreateTareaDto) {
@@ -273,7 +361,119 @@ async addIndicador(dimensionId: number, dto: CreateIndicadorDto) {
   }
 
 
+  // Método para obtener convenios por director
+  async findByDirector(directorId: number) {
+    const usuario = await this.usuarioRepo.findOne({
+      where: { id: directorId },
+      relations: ['establecimiento'],
+    });
 
+    if (!usuario || usuario.rol !== 'Director Establecimiento') {
+      throw new ForbiddenException('No autorizado');
+    }
+
+    return this.repo.find({
+      where: { creadoPor: { id: directorId } },
+      relations: ['dimensiones', 'establecimiento'],
+      order: { fechaInicio: 'DESC' },
+    });
+  }
+
+  // src/convenio/convenio.service.ts
+async actualizarAsignaciones(
+  convenioId: number,
+  asignaciones: { dimensionId: number; responsableId: number | null }[],
+) {
+  const convenio = await this.repo.findOne({
+    where: { id: convenioId },
+    relations: ['dimensiones', 'dimensiones.responsable', 'establecimiento'],
+  });
+
+  if (!convenio) throw new NotFoundException('Convenio no encontrado');
+
+  // Validar que las dimensiones correspondan al convenio
+  const dimensionIds = convenio.dimensiones.map(d => d.id);
+  for (const asignacion of asignaciones) {
+    if (!dimensionIds.includes(asignacion.dimensionId)) {
+      throw new BadRequestException(
+        `La dimensión ${asignacion.dimensionId} no pertenece al convenio ${convenioId}`
+      );
+    }
+  }
+
+  // Actualizar cada dimensión con su nuevo responsable
+  for (const asignacion of asignaciones) {
+    const dimension = convenio.dimensiones.find(d => d.id === asignacion.dimensionId);
+
+    if (!dimension) {
+      throw new NotFoundException(`Dimensión con id ${asignacion.dimensionId} no encontrada en el convenio`);
+    }
+
+    if (asignacion.responsableId == null) {
+      dimension.responsable = null;
+      continue;
+    }
+
+    const responsable = await this.usuarioRepo.findOne({
+      where: {
+        id: asignacion.responsableId,
+        establecimiento: { id: convenio.establecimiento.id },
+        rol: 'Gestion Establecimiento',
+      },
+      relations: ['establecimiento'],
+    });
+
+    if (!responsable) {
+      throw new BadRequestException(`Responsable inválido para la dimensión ${dimension.nombre}`);
+    }
+
+    dimension.responsable = responsable;
+  }
+
+  await this.dimensionRepo.save(convenio.dimensiones);
+
+  return convenio.dimensiones;
+}
+
+// En convenio.service.ts
+async findConveniosAsignados(userId: number) {
+  const usuario = await this.usuarioRepo.findOne({
+    where: { id: userId },
+    relations: ['establecimiento'],
+  });
+
+  if (!usuario || usuario.rol !== 'Gestion Establecimiento') {
+    throw new ForbiddenException('No autorizado');
+  }
+
+  // Buscar dimensiones asignadas al usuario
+  const dimensiones = await this.dimensionRepo.find({
+    where: { responsable: { id: userId } },
+    relations: ['convenio', 'convenio.establecimiento', 'convenio.creadoPor'],
+  });
+
+  // Extraer convenios únicos
+  const conveniosMap = new Map<number, Convenio>();
+  for (const dim of dimensiones) {
+    if (dim.convenio) {
+      const convenioCompleto = await this.repo.findOne({
+        where: { id: dim.convenio.id },
+        relations: [
+          'dimensiones',
+          'dimensiones.responsable',
+          'dimensiones.indicadores',
+          'dimensiones.indicadores.lineaTrabajo',
+          'dimensiones.indicadores.tareas',
+          'establecimiento',
+          'creadoPor',
+        ],
+      });
+      if (convenioCompleto) conveniosMap.set(convenioCompleto.id, convenioCompleto);
+    }
+  }
+
+  return Array.from(conveniosMap.values());
+}
 
 
 

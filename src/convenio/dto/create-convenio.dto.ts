@@ -3,52 +3,68 @@ import { IsString, IsDateString, IsBoolean, ValidateNested, IsArray, IsOptional,
 import { Type } from 'class-transformer';
 
 export class CreateTareaDto {
+  @IsOptional()
   @IsString()
-  descripcion: string;
+  descripcion?: string;
 
+  @IsOptional()
   @IsDateString()
-  plazo: string;
+  plazo?: string;
 
+  @IsOptional()
   @IsString()
-  cumplimiento: string;
+  cumplimiento?: string;
 
+  @IsOptional()
   @IsString()
-  evidencias: string;
+  evidencias?: string;
 
+  @IsOptional()
   @IsString()
-  eval: string;
+  eval?: string;
 
+  @IsOptional()
   @IsString()
-  obs: string;
+  obs?: string;
 }
-
 export class CreateIndicadorDto {
+  @IsOptional()
   @IsString()
-  nombre: string;
+  nombre?: string;
 
+  @IsOptional()
   @IsString()
-  descripcion: string;
+  descripcion?: string;
 
+  @IsOptional()
   @IsString()
-  lineaTrabajo: string;
+  lineaTrabajo?: string;
 
+  @IsOptional()ñ
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateTareaDto)
-  tareas: CreateTareaDto[];
+  tareas?: CreateTareaDto[];
 }
 
 export class CreateDimensionDto {
+  @IsOptional()
   @IsString()
   nombre: string;
 
+  @IsOptional()
   @IsNumber()
   ponderacion: number;
 
+  @IsOptional()
+  @IsNumber()
+  responsableId?: number;
+
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateIndicadorDto)
-  indicadores: CreateIndicadorDto[];
+  indicadores?: CreateIndicadorDto[];
 }
 
 export class CreateConvenioDto {

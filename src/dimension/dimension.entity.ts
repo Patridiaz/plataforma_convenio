@@ -1,6 +1,7 @@
 // src/entities/dimension.entity.ts
 import { Convenio } from 'src/convenio/convenio.entity';
 import { Indicador } from 'src/indicador/indicador.entity';
+import { Usuario } from 'src/usuario/usuario.entity';
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, OneToMany } from 'typeorm';
 
 @Entity()
@@ -19,4 +20,8 @@ export class Dimension {
 
   @OneToMany(() => Indicador, indicador => indicador.dimension, { cascade: true, eager: true })
   indicadores: Indicador[];
+
+  @ManyToOne(() => Usuario, { nullable: true })
+  responsable: Usuario | null;
+
 }

@@ -17,7 +17,7 @@ export class Usuario {
   @Column()
   password: string;
 
-  @Column({ default: 'director' }) // director | sostenedor | admin
+  @Column({ default: 'Director' }) // director | sostenedor | admin
   rol: string;
 
   @OneToMany(() => Convenio, (convenio) => convenio.creadoPor)
