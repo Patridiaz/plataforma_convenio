@@ -1,11 +1,17 @@
 // src/convenio/convenio.controller.ts
-import { Controller, Get, Post, Body, Param, Patch, Delete, UseGuards, Put, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Patch, Delete, UseGuards, Put, Req, UseInterceptors, UploadedFile, Res } from '@nestjs/common';
 import { ConvenioService } from './convenio.service';
 import { CreateConvenioDto, CreateIndicadorDto, CreateTareaDto } from './dto/create-convenio.dto';
 import { CreateDimensionDto } from './dto/create-convenio.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth-guard';
 import { Request } from '@nestjs/common';
 import { UpdateConvenioDto } from './dto/update-convenio.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { extname, join } from 'path';
+import { diskStorage } from 'multer';
+import { v4 as uuidv4 } from 'uuid';
+import { Response } from 'express';
+import { existsSync } from 'fs';
 
 
 @Controller('convenios')
@@ -75,20 +81,99 @@ async addIndicador(
   return this.convenioService.addIndicador(dimensionId, dto, userId);
 }
 
-  @UseGuards(JwtAuthGuard)
-  @Post(':indicadorId/tareas')
+@UseGuards(JwtAuthGuard)
+@Post(':indicadorId/tareas')
+  @UseInterceptors(FileInterceptor('archivo', {
+    storage: diskStorage({
+      destination: './uploads/evidencias',
+      filename: (req, file, cb) => {
+        const uniqueName = `${uuidv4()}${extname(file.originalname)}`;
+        cb(null, uniqueName);
+      }
+    }),
+    fileFilter: (req, file, cb) => {
+      if (file.mimetype !== 'application/pdf') {
+        return cb(new Error('Solo se permiten archivos PDF'), false);
+      }
+      cb(null, true);
+    }
+  }))
   async addTarea(
     @Param('indicadorId') indicadorId: number,
     @Body() dto: CreateTareaDto,
+    @UploadedFile() archivo: Express.Multer.File,
   ) {
+    if (archivo) {
+      dto.evidencias = archivo.filename; // guarda solo nombre o ruta relativa
+    }
     return this.convenioService.addTarea(indicadorId, dto);
   }
 
+  // En convenio.controller.ts o similar
+  @Get('descargar-evidencia/:nombre')
+  async descargarEvidencia(
+    @Param('nombre') nombre: string,
+    @Res() res: Response
+  ) {
+    const ruta = join(__dirname, '..', '..', 'uploads', 'evidencias', nombre);
+
+    if (existsSync(ruta)) {
+      return res.sendFile(ruta, { root: '.' }); // importante: root
+    } else {
+      return res.status(404).json({ mensaje: 'Archivo no encontrado' });
+    }
+  }
+
+
+
+
+  @UseGuards(JwtAuthGuard)
+  @Get('asignados/gestion')
+  findAsignadosGestion(@Request() req) {
+    const userId = req.user.userId;
+    return this.convenioService.findConveniosAsignados(userId);
+  }
+
 @UseGuards(JwtAuthGuard)
-@Get('asignados/gestion')
-findAsignadosGestion(@Request() req) {
+@Put('tareas/:id')
+@UseInterceptors(FileInterceptor('archivo', {
+  storage: diskStorage({
+    destination: './uploads/evidencias',
+    filename: (req, file, cb) => {
+      const uniqueName = `${uuidv4()}${extname(file.originalname)}`;
+      cb(null, uniqueName);
+    }
+  }),
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype !== 'application/pdf') {
+      return cb(new Error('Solo se permiten archivos PDF'), false);
+    }
+    cb(null, true);
+  }
+}))
+
+
+async actualizarTarea(
+  @Param('id') tareaId: number,
+  @Body() dto: CreateTareaDto,
+  @UploadedFile() archivo?: Express.Multer.File
+) {
+  if (archivo) {
+    dto.evidencias = archivo.filename;
+  }
+  return this.convenioService.actualizarTarea(tareaId, dto);
+}
+
+
+@UseGuards(JwtAuthGuard)
+@Put('dimensiones/:id')
+async actualizarDimension(
+  @Param('id') id: number,
+  @Body() dto: Partial<CreateDimensionDto>, // puedes crear UpdateDimensionDto si prefieres
+  @Req() req: any
+) {
   const userId = req.user.userId;
-  return this.convenioService.findConveniosAsignados(userId);
+  return this.convenioService.actualizarDimension(id, dto, userId);
 }
 
 

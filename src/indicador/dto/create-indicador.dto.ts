@@ -19,4 +19,8 @@ export class CreateIndicadorDto {
   @ValidateNested({ each: true })
   @Type(() => CreateTareaDto)
   tareas: CreateTareaDto[];
+
+  @IsString()
+  consideraciones: string;
+
 }

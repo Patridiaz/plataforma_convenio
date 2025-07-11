@@ -12,21 +12,20 @@ export class CreateTareaDto {
   plazo?: string;
 
   @IsOptional()
-  @IsString()
+  @IsDateString()
   cumplimiento?: string;
 
+  // Evidencias como archivos, se manejará por separado con multer
+  // Por lo tanto, aquí podrías omitirlo o aceptar solo una ruta/URL:
   @IsOptional()
   @IsString()
   evidencias?: string;
 
   @IsOptional()
   @IsString()
-  eval?: string;
-
-  @IsOptional()
-  @IsString()
   obs?: string;
 }
+
 export class CreateIndicadorDto {
   @IsOptional()
   @IsString()
@@ -45,6 +44,11 @@ export class CreateIndicadorDto {
   @ValidateNested({ each: true })
   @Type(() => CreateTareaDto)
   tareas?: CreateTareaDto[];
+
+  @IsOptional()
+  @IsString()
+  Consideraciones?: string;
+
 }
 
 export class CreateDimensionDto {

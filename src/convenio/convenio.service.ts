@@ -292,7 +292,7 @@ async update(id: number, dto: UpdateConvenioDto, usuarioId: number) {
   return updated;
 }
 
-
+// Agregar dimensiones a un convenio
 async addDimension(convenioId: number, dto: CreateDimensionDto) {
   const convenio = await this.repo.findOne({
     where: { id: convenioId },
@@ -312,6 +312,7 @@ async addDimension(convenioId: number, dto: CreateDimensionDto) {
 }
 
 
+// Agregar un indicador a una dimensión
 async addIndicador(dimensionId: number, dto: CreateIndicadorDto, userId: number) {
   const dimension = await this.dimensionRepo.findOne({
     where: { id: dimensionId },
@@ -350,16 +351,17 @@ async addIndicador(dimensionId: number, dto: CreateIndicadorDto, userId: number)
   return this.indicadorRepo.save(indicador);
 }
 
-
-
-
+  // Agregar una tarea a un indicador
   async addTarea(indicadorId: number, dto: CreateTareaDto) {
-    const indicador = await this.indicadorRepo.findOne({ where: { id: indicadorId }, relations: ['tareas'] });
+    const indicador = await this.indicadorRepo.findOne({
+      where: { id: indicadorId },
+      relations: ['tareas'],
+    });
     if (!indicador) throw new NotFoundException('Indicador no encontrado');
+
     const tarea = this.tareaRepo.create({ ...dto, indicador });
     return this.tareaRepo.save(tarea);
   }
-
 
   // Método para obtener convenios por director
   async findByDirector(directorId: number) {
@@ -475,6 +477,78 @@ async findConveniosAsignados(userId: number) {
   return Array.from(conveniosMap.values());
 }
 
+// Actualizar una tarea existente
+async actualizarTarea(tareaId: number, dto: CreateTareaDto): Promise<Tarea> {
+  const tarea = await this.tareaRepo.findOne({
+    where: { id: tareaId },
+  });
+
+  if (!tarea) {
+    throw new NotFoundException(`Tarea con ID ${tareaId} no encontrada`);
+  }
+
+  // ✅ Convertir fechas y actualizar campos
+  if (dto.descripcion !== undefined) tarea.descripcion = dto.descripcion;
+  if (dto.plazo !== undefined) tarea.plazo = new Date(dto.plazo);
+  if (dto.cumplimiento !== undefined) tarea.cumplimiento = new Date(dto.cumplimiento);
+  if (dto.evidencias !== undefined) tarea.evidencias = dto.evidencias;
+  if (dto.obs !== undefined) tarea.obs = dto.obs;
+
+  return this.tareaRepo.save(tarea);
+}
+
+async actualizarDimension(
+  dimensionId: number,
+  dto: Partial<CreateDimensionDto>,
+  userId: number
+) {
+  const dimension = await this.dimensionRepo.findOne({
+    where: { id: dimensionId },
+    relations: ['responsable', 'convenio', 'convenio.creadoPor'],
+  });
+
+  if (!dimension) throw new NotFoundException('Dimensión no encontrada');
+
+  const esDirector = dimension.convenio?.creadoPor?.id === userId;
+  const esResponsable = dimension.responsable?.id === userId;
+
+  if (!esDirector && !esResponsable) {
+    throw new ForbiddenException('No tienes permisos para editar esta dimensión');
+  }
+
+  if (dto.nombre !== undefined) {
+    dimension.nombre = dto.nombre;
+  }
+
+  if (dto.ponderacion !== undefined) {
+    dimension.ponderacion = dto.ponderacion;
+  }
+
+  // Solo el director puede cambiar el responsable
+  if (dto.responsableId !== undefined && esDirector) {
+    if (dto.responsableId === null) {
+      dimension.responsable = null;
+    } else {
+      const nuevoResponsable = await this.usuarioRepo.findOne({
+        where: {
+          id: dto.responsableId,
+          establecimiento: { id: dimension.convenio.establecimiento.id },
+          rol: 'Gestion Establecimiento',
+        },
+        relations: ['establecimiento'],
+      });
+
+      if (!nuevoResponsable) {
+        throw new BadRequestException('Responsable inválido');
+      }
+
+      dimension.responsable = nuevoResponsable;
+    }
+  }
+
+  const saved = await this.dimensionRepo.save(dimension);
+  return saved;
+}
 
 
 

@@ -1,32 +1,26 @@
-import { Indicador } from "src/indicador/indicador.entity";
-import { LineaTrabajo } from "src/linea-trabajo/linea-trabajo.entity";
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from "typeorm";
+import { Indicador } from 'src/indicador/indicador.entity';
+import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 
-// src/tarea/tarea.entity.ts
 @Entity()
 export class Tarea {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ type: 'text' })
+  @Column({ type: 'text',  nullable: true })
   descripcion: string;
 
-  @Column({ type: 'date' })
+  @Column({ type: 'date', nullable: true })
   plazo: Date;
 
-  @Column({ nullable: true })
-  cumplimiento?: string;
+  @Column({ type: 'date', nullable: true })
+  cumplimiento?: Date; // Cambiado de string a fecha
 
   @Column({ nullable: true })
-  evidencias?: string;
-
-  @Column({ nullable: true })
-  eval?: string;
+  evidencias?: string; // Nombre del archivo PDF guardado
 
   @Column({ nullable: true })
   obs?: string;
 
-  @ManyToOne(() => Indicador, indicador => indicador.tareas)
+  @ManyToOne(() => Indicador, indicador => indicador.tareas, { onDelete: 'CASCADE' })
   indicador: Indicador;
 }
-

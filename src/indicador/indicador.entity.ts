@@ -17,6 +17,9 @@ export class Indicador {
   @Column({ type: 'text' })
   descripcion: string;
 
+  @Column({ type: 'text',  nullable: true })
+  consideraciones: string;
+
   @ManyToOne(() => LineaTrabajo, (lineaTrabajo) => lineaTrabajo.indicadores, { eager: true })
   lineaTrabajo: LineaTrabajo;
 

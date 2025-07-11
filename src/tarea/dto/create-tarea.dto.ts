@@ -6,11 +6,11 @@ export class CreateTareaDto {
   descripcion: string;
 
   @IsDateString()
-  plazo: Date;
+  plazo: string; // ← DEBE ser string
 
   @IsOptional()
-  @IsString()
-  cumplimiento?: string;
+  @IsDateString()
+  cumplimiento?: string; // ← también corregido
 
   @IsOptional()
   @IsString()
