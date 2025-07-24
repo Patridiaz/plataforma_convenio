@@ -444,37 +444,57 @@ async findConveniosAsignados(userId: number) {
     relations: ['establecimiento'],
   });
 
-  if (!usuario || usuario.rol !== 'Gestion Establecimiento') {
+  if (!usuario) {
     throw new ForbiddenException('No autorizado');
   }
 
-  // Buscar dimensiones asignadas al usuario
-  const dimensiones = await this.dimensionRepo.find({
-    where: { responsable: { id: userId } },
-    relations: ['convenio', 'convenio.establecimiento', 'convenio.creadoPor'],
-  });
-
-  // Extraer convenios únicos
-  const conveniosMap = new Map<number, Convenio>();
-  for (const dim of dimensiones) {
-    if (dim.convenio) {
-      const convenioCompleto = await this.repo.findOne({
-        where: { id: dim.convenio.id },
-        relations: [
-          'dimensiones',
-          'dimensiones.responsable',
-          'dimensiones.indicadores',
-          'dimensiones.indicadores.lineaTrabajo',
-          'dimensiones.indicadores.tareas',
-          'establecimiento',
-          'creadoPor',
-        ],
-      });
-      if (convenioCompleto) conveniosMap.set(convenioCompleto.id, convenioCompleto);
-    }
+  // ✅ Si es Revisor, devolver todos los convenios
+  if (usuario.rol === 'Revisor') {
+    return this.repo.find({
+      relations: [
+        'dimensiones',
+        'dimensiones.responsable',
+        'dimensiones.indicadores',
+        'dimensiones.indicadores.lineaTrabajo',
+        'dimensiones.indicadores.tareas',
+        'establecimiento',
+        'creadoPor',
+      ],
+      order: { fechaInicio: 'DESC' },
+    });
   }
 
-  return Array.from(conveniosMap.values());
+  // ✅ Si es Gestión Establecimiento, solo los asignados
+  if (usuario.rol === 'Gestion Establecimiento') {
+    const dimensiones = await this.dimensionRepo.find({
+      where: { responsable: { id: userId } },
+      relations: ['convenio', 'convenio.establecimiento', 'convenio.creadoPor'],
+    });
+
+    const conveniosMap = new Map<number, Convenio>();
+    for (const dim of dimensiones) {
+      if (dim.convenio) {
+        const convenioCompleto = await this.repo.findOne({
+          where: { id: dim.convenio.id },
+          relations: [
+            'dimensiones',
+            'dimensiones.responsable',
+            'dimensiones.indicadores',
+            'dimensiones.indicadores.lineaTrabajo',
+            'dimensiones.indicadores.tareas',
+            'establecimiento',
+            'creadoPor',
+          ],
+        });
+        if (convenioCompleto) conveniosMap.set(convenioCompleto.id, convenioCompleto);
+      }
+    }
+
+    return Array.from(conveniosMap.values());
+  }
+
+  // ❌ Otros roles no autorizados
+  throw new ForbiddenException('No autorizado');
 }
 
 // Actualizar una tarea existente

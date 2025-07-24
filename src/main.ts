@@ -7,7 +7,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    origin: 'http://localhost:4200', // Cambia al puerto de tu frontend Angular
+  origin: ['http://localhost:4200', 'https://miconvenio.eduhuechuraba.cl']
   });
 
   // Servir archivos estáticos de la carpeta 'uploads/evidencias'
