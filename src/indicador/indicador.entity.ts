@@ -14,11 +14,17 @@ export class Indicador {
   @Column()
   nombre: string;
 
-  @Column({ type: 'text' })
-  descripcion: string;
+  @Column({ type: 'text', nullable: true  })
+  descripcion?: string;
 
   @Column({ type: 'text',  nullable: true })
   consideraciones: string;
+  
+  @Column({ type: 'float', nullable: true })
+  meta?: number;
+
+  @Column({ type: 'float', nullable: true })
+  evaluacion?: number;
 
   @ManyToOne(() => LineaTrabajo, (lineaTrabajo) => lineaTrabajo.indicadores, { eager: true })
   lineaTrabajo: LineaTrabajo;

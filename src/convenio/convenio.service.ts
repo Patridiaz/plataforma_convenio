@@ -2,7 +2,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Convenio } from './convenio.entity';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { CreateConvenioDto, CreateDimensionDto, CreateIndicadorDto, CreateTareaDto } from './dto/create-convenio.dto';
 import { Usuario } from 'src/usuario/usuario.entity';
 import { Indicador } from 'src/indicador/indicador.entity';
@@ -69,8 +69,7 @@ async create(dto: CreateConvenioDto, usuarioId: number) {
         const responsable = await this.usuarioRepo.findOne({
           where: {
             id: dimDto.responsableId,
-            establecimiento: { id: establecimiento.id },
-            rol: 'Gestion Establecimiento',
+            establecimiento: { id: establecimiento.id }
           },
           relations: ['establecimiento'],
         });
@@ -78,7 +77,7 @@ async create(dto: CreateConvenioDto, usuarioId: number) {
         if (!responsable) {
           throw new BadRequestException(`Responsable inválido para la dimensión ${dimDto.nombre}`);
         }
-        dimension.responsable = responsable;
+        dimension.responsables = [responsable];
       }
 
       // Mapear indicadores solo si existen
@@ -94,6 +93,9 @@ async create(dto: CreateConvenioDto, usuarioId: number) {
           const indicador = new Indicador();
           indicador.nombre = ind.nombre;
           indicador.descripcion = ind.descripcion ?? '';
+          indicador.meta = ind.meta ?? undefined;
+          indicador.evaluacion = ind.evaluacion ?? undefined;
+          indicador.consideraciones = ind.consideraciones ?? '';
 
           let lineaTrabajoEntity = await this.lineaTrabajoRepo.findOne({ where: { nombre: ind.lineaTrabajo } });
           if (!lineaTrabajoEntity) {
@@ -146,7 +148,7 @@ async create(dto: CreateConvenioDto, usuarioId: number) {
         'dimensiones.indicadores',
         'dimensiones.indicadores.tareas',
         'dimensiones.indicadores.lineaTrabajo',
-        'dimensiones.responsable',
+        'dimensiones.responsables',
       ],
     });
 
@@ -162,7 +164,7 @@ async update(id: number, dto: UpdateConvenioDto, usuarioId: number) {
       'creadoPor',
       'establecimiento',
       'dimensiones',
-      'dimensiones.responsable',
+      'dimensiones.responsables',
     ],
   });
 
@@ -178,7 +180,7 @@ async update(id: number, dto: UpdateConvenioDto, usuarioId: number) {
 
   const isDirector = convenio.creadoPor.id === usuarioId;
   const isResponsableAsignado = convenio.dimensiones.some(
-    (dim) => dim.responsable?.id === usuarioId
+    (dim) => dim.responsables[0]?.id === usuarioId
   );
 
   if (!isDirector && !(usuario.rol === 'Gestion Establecimiento' && isResponsableAsignado)) {
@@ -211,15 +213,14 @@ async update(id: number, dto: UpdateConvenioDto, usuarioId: number) {
         const responsable = await this.usuarioRepo.findOne({
           where: {
             id: dimDto.responsableId,
-            establecimiento: { id: convenio.establecimiento.id },
-            rol: 'Gestion Establecimiento',
+            establecimiento: { id: convenio.establecimiento.id }
           },
           relations: ['establecimiento'],
         });
         if (!responsable) {
           throw new BadRequestException(`Responsable inválido para la dimensión ${dimDto.nombre}`);
         }
-        dimension.responsable = responsable;
+        dimension.responsables = [responsable];
       }
 
       // Mapear indicadores solo si vienen
@@ -272,7 +273,7 @@ async update(id: number, dto: UpdateConvenioDto, usuarioId: number) {
       'creadoPor',
       'establecimiento',
       'dimensiones',
-      'dimensiones.responsable',
+      'dimensiones.responsables',
       'dimensiones.indicadores',
       'dimensiones.indicadores.tareas',
     ],
@@ -313,20 +314,22 @@ async addDimension(convenioId: number, dto: CreateDimensionDto) {
 
 
 // Agregar un indicador a una dimensión
-async addIndicador(dimensionId: number, dto: CreateIndicadorDto, userId: number) {
+async addIndicador(dimensionId: number, dto: CreateIndicadorDto, userId: number,userRole: string) {
   const dimension = await this.dimensionRepo.findOne({
     where: { id: dimensionId },
-    relations: ['indicadores', 'responsable', 'convenio', 'convenio.creadoPor'],
+    relations: ['indicadores', 'responsables', 'convenio', 'convenio.creadoPor'],
   });
 
   if (!dimension) {
     throw new NotFoundException('Dimensión no encontrada');
   }
 
-  const isResponsable = dimension.responsable?.id === userId;
+  const isResponsable = dimension.responsables[0]?.id === userId;
   const isDirector = dimension.convenio?.creadoPor?.id === userId;
+  const isRevisor = userRole === 'Revisor';
+  const isGestionEstablecimiento = userRole === 'Gestion Establecimiento';
 
-  if (!isResponsable && !isDirector) {
+  if (!isResponsable && !isDirector && !isRevisor && !isGestionEstablecimiento) {
     throw new ForbiddenException('No tienes permisos para agregar indicadores en esta dimensión');
   }
 
@@ -342,26 +345,90 @@ async addIndicador(dimensionId: number, dto: CreateIndicadorDto, userId: number)
 
   const indicador = this.indicadorRepo.create({
     nombre: dto.nombre,
-    descripcion: dto.descripcion,
+    descripcion: dto.descripcion ?? '',
     lineaTrabajo,
     dimension,
-    tareas: dto.tareas?.map(t => Object.assign(new Tarea(), t)),
-  });
+    tareas: dto.tareas?.map(t => Object.assign(new Tarea(), t)) || [],
+    meta: dto.meta ?? null,
+    evaluacion: dto.evaluacion ?? null,
+    consideraciones: dto.consideraciones ?? null,
+  } as Partial<Indicador>);
 
   return this.indicadorRepo.save(indicador);
 }
 
-  // Agregar una tarea a un indicador
-  async addTarea(indicadorId: number, dto: CreateTareaDto) {
-    const indicador = await this.indicadorRepo.findOne({
-      where: { id: indicadorId },
-      relations: ['tareas'],
-    });
-    if (!indicador) throw new NotFoundException('Indicador no encontrado');
+async updateIndicador(indicadorId: number, dto: Partial<CreateIndicadorDto>, userId: number,userRole: string,) {
+  const indicador = await this.indicadorRepo.findOne({
+    where: { id: indicadorId },
+    relations: ['dimension', 'dimension.responsables', 'dimension.convenio', 'dimension.convenio.creadoPor'],
+  });
 
-    const tarea = this.tareaRepo.create({ ...dto, indicador });
-    return this.tareaRepo.save(tarea);
+  if (!indicador) {
+    throw new NotFoundException('Indicador no encontrado');
   }
+
+  const dimension = indicador.dimension;
+
+  const isResponsable = dimension.responsables.some(r => r.id === userId);
+  const isDirector = dimension.convenio?.creadoPor?.id === userId;
+  const isRevisor = userRole === 'Revisor';
+
+if (!isResponsable && !isDirector && !isRevisor) {
+  throw new ForbiddenException('No tienes permisos para editar este indicador');
+}
+  // Si se actualiza la línea de trabajo
+  if (dto.lineaTrabajo) {
+    let lineaTrabajo = await this.lineaTrabajoRepo.findOne({ where: { nombre: dto.lineaTrabajo } });
+    if (!lineaTrabajo) {
+      lineaTrabajo = this.lineaTrabajoRepo.create({
+        nombre: dto.lineaTrabajo,
+        descripcion: dto.lineaTrabajo || 'Generado automáticamente',
+      });
+      await this.lineaTrabajoRepo.save(lineaTrabajo);
+    }
+    indicador.lineaTrabajo = lineaTrabajo;
+  }
+
+  // Actualizar los campos simples
+  indicador.nombre = dto.nombre ?? indicador.nombre;
+  indicador.descripcion = dto.descripcion ?? indicador.descripcion;
+  indicador.meta = dto.meta ?? indicador.meta;
+  indicador.evaluacion = dto.evaluacion ?? indicador.evaluacion;
+  indicador.consideraciones = dto.consideraciones ?? indicador.consideraciones;
+
+  return this.indicadorRepo.save(indicador);
+}
+
+
+  // Agregar una tarea a un indicador
+async addTarea(indicadorId: number, dto: CreateTareaDto) {
+  const indicador = await this.indicadorRepo.findOne({
+    where: { id: indicadorId },
+    relations: ['tareas'],
+  });
+  if (!indicador) throw new NotFoundException('Indicador no encontrado');
+
+  // Validar fechas
+  const cumplimiento = dto.cumplimiento ? new Date(dto.cumplimiento) : null;
+  const plazo = dto.plazo ? new Date(dto.plazo) : null;
+
+  if (cumplimiento && isNaN(cumplimiento.getTime())) {
+    throw new BadRequestException('La fecha de cumplimiento no es válida');
+  }
+  if (plazo && isNaN(plazo.getTime())) {
+    throw new BadRequestException('La fecha de plazo no es válida');
+  }
+
+  const tarea = this.tareaRepo.create({
+    descripcion: dto.descripcion ?? null,
+    plazo: plazo ? plazo.toISOString().split('T')[0] : null,
+    cumplimiento: cumplimiento ? cumplimiento.toISOString().split('T')[0] : null,
+    evidencias: dto.evidencias ?? null,
+    obs: dto.obs ?? null,
+    indicador: indicador,
+  } as Partial<Tarea>);
+  return this.tareaRepo.save(tarea);
+}
 
   // Método para obtener convenios por director
   async findByDirector(directorId: number) {
@@ -381,20 +448,20 @@ async addIndicador(dimensionId: number, dto: CreateIndicadorDto, userId: number)
     });
   }
 
-  // src/convenio/convenio.service.ts
+// src/convenio/convenio.service.ts
 async actualizarAsignaciones(
   convenioId: number,
-  asignaciones: { dimensionId: number; responsableId: number | null }[],
+  asignaciones: { dimensionId: number; responsableIds: number[] }[],
 ) {
   const convenio = await this.repo.findOne({
     where: { id: convenioId },
-    relations: ['dimensiones', 'dimensiones.responsable', 'establecimiento'],
+    relations: ['dimensiones', 'dimensiones.responsables', 'establecimiento'],
   });
 
   if (!convenio) throw new NotFoundException('Convenio no encontrado');
 
-  // Validar que las dimensiones correspondan al convenio
   const dimensionIds = convenio.dimensiones.map(d => d.id);
+
   for (const asignacion of asignaciones) {
     if (!dimensionIds.includes(asignacion.dimensionId)) {
       throw new BadRequestException(
@@ -403,37 +470,34 @@ async actualizarAsignaciones(
     }
   }
 
-  // Actualizar cada dimensión con su nuevo responsable
   for (const asignacion of asignaciones) {
     const dimension = convenio.dimensiones.find(d => d.id === asignacion.dimensionId);
-
     if (!dimension) {
-      throw new NotFoundException(`Dimensión con id ${asignacion.dimensionId} no encontrada en el convenio`);
+      throw new NotFoundException(`Dimensión con id ${asignacion.dimensionId} no encontrada`);
     }
 
-    if (asignacion.responsableId == null) {
-      dimension.responsable = null;
+    if (!asignacion.responsableIds || asignacion.responsableIds.length === 0) {
+      dimension.responsables = []; // ← corregido a plural
       continue;
     }
 
-    const responsable = await this.usuarioRepo.findOne({
+    // ✅ Corrección aquí: buscar todos los usuarios válidos con operador `In`
+    const responsables = await this.usuarioRepo.find({
       where: {
-        id: asignacion.responsableId,
-        establecimiento: { id: convenio.establecimiento.id },
-        rol: 'Gestion Establecimiento',
+        id: In(asignacion.responsableIds),
+        establecimiento: { id: convenio.establecimiento.id }
       },
       relations: ['establecimiento'],
     });
 
-    if (!responsable) {
-      throw new BadRequestException(`Responsable inválido para la dimensión ${dimension.nombre}`);
+    if (responsables.length !== asignacion.responsableIds.length) {
+      throw new BadRequestException(`Uno o más responsables inválidos en dimensión ${dimension.id}`);
     }
 
-    dimension.responsable = responsable;
+    dimension.responsables = responsables; // ← corregido a plural
   }
 
   await this.dimensionRepo.save(convenio.dimensiones);
-
   return convenio.dimensiones;
 }
 
@@ -453,7 +517,7 @@ async findConveniosAsignados(userId: number) {
     return this.repo.find({
       relations: [
         'dimensiones',
-        'dimensiones.responsable',
+        'dimensiones.responsables',
         'dimensiones.indicadores',
         'dimensiones.indicadores.lineaTrabajo',
         'dimensiones.indicadores.tareas',
@@ -465,9 +529,9 @@ async findConveniosAsignados(userId: number) {
   }
 
   // ✅ Si es Gestión Establecimiento, solo los asignados
-  if (usuario.rol === 'Gestion Establecimiento') {
+  if (usuario.rol === 'Gestion Establecimiento' ||usuario.rol === 'Director Establecimiento') {
     const dimensiones = await this.dimensionRepo.find({
-      where: { responsable: { id: userId } },
+      where: { responsables: { id: userId } },
       relations: ['convenio', 'convenio.establecimiento', 'convenio.creadoPor'],
     });
 
@@ -478,7 +542,7 @@ async findConveniosAsignados(userId: number) {
           where: { id: dim.convenio.id },
           relations: [
             'dimensiones',
-            'dimensiones.responsable',
+            'dimensiones.responsables',
             'dimensiones.indicadores',
             'dimensiones.indicadores.lineaTrabajo',
             'dimensiones.indicadores.tareas',
@@ -509,8 +573,30 @@ async actualizarTarea(tareaId: number, dto: CreateTareaDto): Promise<Tarea> {
 
   // ✅ Convertir fechas y actualizar campos
   if (dto.descripcion !== undefined) tarea.descripcion = dto.descripcion;
-  if (dto.plazo !== undefined) tarea.plazo = new Date(dto.plazo);
-  if (dto.cumplimiento !== undefined) tarea.cumplimiento = new Date(dto.cumplimiento);
+if (dto.plazo !== undefined) {
+  if (dto.plazo === '' || dto.plazo === null) {
+    tarea.plazo = null; // O lo que quieras cuando la fecha está vacía
+  } else {
+    const fechaPlazo = new Date(dto.plazo);
+    if (isNaN(fechaPlazo.getTime())) {
+      throw new BadRequestException('Fecha de plazo inválida');
+    }
+    tarea.plazo = fechaPlazo.toISOString().split('T')[0];
+  }
+}
+
+if (dto.cumplimiento !== undefined) {
+  if (dto.cumplimiento === '' || dto.cumplimiento === null) {
+    tarea.cumplimiento = null;
+  } else {
+    const fechaCumplimiento = new Date(dto.cumplimiento);
+    if (isNaN(fechaCumplimiento.getTime())) {
+      throw new BadRequestException('Fecha de cumplimiento inválida');
+    }
+    tarea.cumplimiento = fechaCumplimiento.toISOString().split('T')[0];
+  }
+}
+
   if (dto.evidencias !== undefined) tarea.evidencias = dto.evidencias;
   if (dto.obs !== undefined) tarea.obs = dto.obs;
 
@@ -524,13 +610,13 @@ async actualizarDimension(
 ) {
   const dimension = await this.dimensionRepo.findOne({
     where: { id: dimensionId },
-    relations: ['responsable', 'convenio', 'convenio.creadoPor'],
+    relations: ['responsables', 'convenio', 'convenio.creadoPor'],
   });
 
   if (!dimension) throw new NotFoundException('Dimensión no encontrada');
 
   const esDirector = dimension.convenio?.creadoPor?.id === userId;
-  const esResponsable = dimension.responsable?.id === userId;
+  const esResponsable = dimension.responsables[0]?.id === userId;
 
   if (!esDirector && !esResponsable) {
     throw new ForbiddenException('No tienes permisos para editar esta dimensión');
@@ -547,13 +633,12 @@ async actualizarDimension(
   // Solo el director puede cambiar el responsable
   if (dto.responsableId !== undefined && esDirector) {
     if (dto.responsableId === null) {
-      dimension.responsable = null;
+      dimension.responsables = [];
     } else {
       const nuevoResponsable = await this.usuarioRepo.findOne({
         where: {
           id: dto.responsableId,
-          establecimiento: { id: dimension.convenio.establecimiento.id },
-          rol: 'Gestion Establecimiento',
+          establecimiento: { id: dimension.convenio.establecimiento.id }
         },
         relations: ['establecimiento'],
       });
@@ -562,7 +647,7 @@ async actualizarDimension(
         throw new BadRequestException('Responsable inválido');
       }
 
-      dimension.responsable = nuevoResponsable;
+      dimension.responsables = [nuevoResponsable];
     }
   }
 

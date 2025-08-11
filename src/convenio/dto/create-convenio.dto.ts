@@ -1,6 +1,6 @@
 // src/convenio/dto/create-convenio.dto.ts
-import { IsString, IsDateString, IsBoolean, ValidateNested, IsArray, IsOptional, IsNumber } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsString, IsDateString, IsBoolean, ValidateNested, IsArray, IsOptional, IsNumber, Min, Max } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 
 export class CreateTareaDto {
   @IsOptional()
@@ -9,11 +9,14 @@ export class CreateTareaDto {
 
   @IsOptional()
   @IsDateString()
+  @Transform(({ value }) => value === '' ? undefined : value)
   plazo?: string;
 
   @IsOptional()
   @IsDateString()
+  @Transform(({ value }) => value === '' ? undefined : value)
   cumplimiento?: string;
+
 
   // Evidencias como archivos, se manejará por separado con multer
   // Por lo tanto, aquí podrías omitirlo o aceptar solo una ruta/URL:
@@ -39,18 +42,28 @@ export class CreateIndicadorDto {
   @IsString()
   lineaTrabajo?: string;
 
-  @IsOptional()ñ
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateTareaDto)
   tareas?: CreateTareaDto[];
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  meta?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  evaluacion?: number;
+
+  @IsOptional()
   @IsString()
-  Consideraciones?: string;
-
+  consideraciones?: string;
 }
-
 export class CreateDimensionDto {
   @IsOptional()
   @IsString()

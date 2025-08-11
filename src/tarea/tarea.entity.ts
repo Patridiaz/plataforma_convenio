@@ -7,18 +7,18 @@ export class Tarea {
   id: number;
 
   @Column({ type: 'text',  nullable: true })
-  descripcion: string;
+  descripcion?: string;
 
   @Column({ type: 'date', nullable: true })
-  plazo: Date;
+  plazo: string | null;
 
   @Column({ type: 'date', nullable: true })
-  cumplimiento?: Date; // Cambiado de string a fecha
+  cumplimiento?: string | null; // Cambiado de string a fecha
 
   @Column({ nullable: true })
   evidencias?: string; // Nombre del archivo PDF guardado
 
-  @Column({ nullable: true })
+  @Column({ type: 'text', nullable: true })
   obs?: string;
 
   @ManyToOne(() => Indicador, indicador => indicador.tareas, { onDelete: 'CASCADE' })

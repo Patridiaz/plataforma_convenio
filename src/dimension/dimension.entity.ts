@@ -2,7 +2,7 @@
 import { Convenio } from 'src/convenio/convenio.entity';
 import { Indicador } from 'src/indicador/indicador.entity';
 import { Usuario } from 'src/usuario/usuario.entity';
-import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, OneToMany } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, OneToMany, ManyToMany, JoinTable } from 'typeorm';
 
 @Entity()
 export class Dimension {
@@ -21,7 +21,17 @@ export class Dimension {
   @OneToMany(() => Indicador, indicador => indicador.dimension, { cascade: true, eager: true })
   indicadores: Indicador[];
 
-  @ManyToOne(() => Usuario, { nullable: true })
-  responsable: Usuario | null;
-
+  @ManyToMany(() => Usuario, { cascade: true })
+  @JoinTable({
+    name: 'dimension_responsables',
+    joinColumn: {
+      name: 'dimension_id',
+      referencedColumnName: 'id',
+    },
+    inverseJoinColumn: {
+      name: 'usuario_id',
+      referencedColumnName: 'id',
+    },
+  })
+  responsables: Usuario[];
 }

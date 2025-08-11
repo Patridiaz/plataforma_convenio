@@ -81,7 +81,6 @@ export class UsuarioService {
   async obtenerUsuariosGestionEstablecimientoPorEstablecimiento(establecimientoId: number): Promise<Partial<Usuario>[]> {
   const usuarios = await this.repo.find({
     where: {
-      rol: 'GESTION ESTABLECIMIENTO',
       establecimiento: { id: establecimientoId },
     },
     relations: ['establecimiento'],

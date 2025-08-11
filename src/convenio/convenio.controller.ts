@@ -1,5 +1,5 @@
 // src/convenio/convenio.controller.ts
-import { Controller, Get, Post, Body, Param, Patch, Delete, UseGuards, Put, Req, UseInterceptors, UploadedFile, Res } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Patch, Delete, UseGuards, Put, Req, UseInterceptors, UploadedFile, Res, ParseIntPipe } from '@nestjs/common';
 import { ConvenioService } from './convenio.service';
 import { CreateConvenioDto, CreateIndicadorDto, CreateTareaDto } from './dto/create-convenio.dto';
 import { CreateDimensionDto } from './dto/create-convenio.dto';
@@ -12,6 +12,7 @@ import { diskStorage } from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { Response } from 'express';
 import { existsSync } from 'fs';
+import { AuthGuard } from '@nestjs/passport';
 
 
 @Controller('convenios')
@@ -65,7 +66,7 @@ export class ConvenioController {
 @Put(':convenioId/asignaciones')
 async actualizarAsignaciones(
   @Param('convenioId') convenioId: number,
-  @Body() asignaciones: { dimensionId: number; responsableId: number | null }[]
+  @Body() asignaciones: { dimensionId: number; responsableIds: number[] }[]
 ) {
   return this.convenioService.actualizarAsignaciones(convenioId, asignaciones);
 }
@@ -78,8 +79,24 @@ async addIndicador(
   @Req() req: any,
 ) {
   const userId = req.user.userId;
-  return this.convenioService.addIndicador(dimensionId, dto, userId);
+  const userRole = req.user.rol;
+  return this.convenioService.addIndicador(dimensionId, dto, userId,userRole);
 }
+
+
+@UseGuards(AuthGuard('jwt'))
+@Patch('indicador/:id')
+async updateIndicador(
+  @Param('id') id: string,
+  @Body() dto: Partial<CreateIndicadorDto>,
+  @Request() req,
+) {
+  const userId = req.user.userId;
+  const userRole = req.user.rol;
+
+  return this.convenioService.updateIndicador(Number(id), dto, userId, userRole);
+}
+
 
 @UseGuards(JwtAuthGuard)
 @Post(':indicadorId/tareas')
@@ -105,6 +122,9 @@ async addIndicador(
   ) {
     if (archivo) {
       dto.evidencias = archivo.filename; // guarda solo nombre o ruta relativa
+        // 🔎 Normaliza cadenas vacías
+      if (dto.plazo === '') delete (dto as any).plazo;
+      if (dto.cumplimiento === '') delete (dto as any).cumplimiento;
     }
     return this.convenioService.addTarea(indicadorId, dto);
   }
@@ -123,9 +143,6 @@ async addIndicador(
       return res.status(404).json({ mensaje: 'Archivo no encontrado' });
     }
   }
-
-
-
 
   @UseGuards(JwtAuthGuard)
   @Get('asignados/gestion')
