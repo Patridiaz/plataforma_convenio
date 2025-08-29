@@ -31,6 +31,12 @@ export class ConvenioController {
     return this.convenioService.findAll();
   }
 
+  // 📤 Descargar plantilla
+  @Get('descargar-plantilla')
+  async descargarPlantilla(@Res() res: Response) {
+    return this.convenioService.descargarPlantillaExcel(res);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.convenioService.findOne(+id);
@@ -193,7 +199,27 @@ async actualizarDimension(
   return this.convenioService.actualizarDimension(id, dto, userId);
 }
 
+@UseGuards(JwtAuthGuard)
+@Patch(':id/finalizar')
+finalizarConvenio(
+  @Param('id', ParseIntPipe) id: number,
+  @Req() req: any
+) {
+  const userId = req.user.userId;
+  const rol = req.user.rol;
 
+  return this.convenioService.finalizarConvenio(id, userId, rol);
+}
 
+@Post('importar-excel')
+@UseInterceptors(FileInterceptor('file'))
+async importarExcel(@UploadedFile() file: Express.Multer.File) {
+  try {
+    return await this.convenioService.importarDesdeExcel(file);
+  } catch (error) {
+    console.error('Error al importar Excel:', error);
+    throw error; // Esto devuelve el error real a Postman/Frontend
+  }
+}
 
 }

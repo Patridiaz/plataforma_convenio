@@ -2,7 +2,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Convenio } from './convenio.entity';
-import { In, Repository } from 'typeorm';
+import { DataSource, DeepPartial, In, Repository } from 'typeorm';
 import { CreateConvenioDto, CreateDimensionDto, CreateIndicadorDto, CreateTareaDto } from './dto/create-convenio.dto';
 import { Usuario } from 'src/usuario/usuario.entity';
 import { Indicador } from 'src/indicador/indicador.entity';
@@ -10,6 +10,12 @@ import { Tarea } from 'src/tarea/tarea.entity';
 import { LineaTrabajo } from 'src/linea-trabajo/linea-trabajo.entity';
 import { Dimension } from 'src/dimension/dimension.entity';
 import { UpdateConvenioDto } from './dto/update-convenio.dto';
+import * as XLSX from 'xlsx';
+import * as ExcelJS from 'exceljs';
+import { Response } from 'express';
+import { Establecimiento } from 'src/establecimiento/establecimiento.entity';
+
+
 
 @Injectable()
 export class ConvenioService {
@@ -26,7 +32,10 @@ export class ConvenioService {
     private readonly tareaRepo: Repository<Tarea>,
     @InjectRepository(LineaTrabajo)
     private readonly lineaTrabajoRepo: Repository<LineaTrabajo>,
+     private readonly dataSource: DataSource, // para transacciones,
   ) {}
+
+  
 
 async create(dto: CreateConvenioDto, usuarioId: number) {
   const usuario = await this.usuarioRepo.findOne({
@@ -656,6 +665,198 @@ async actualizarDimension(
 }
 
 
+  async finalizarConvenio(convenioId: number, userId: number, rol: string) {
+    const convenio = await this.repo.findOne({ where: { id: convenioId } });
+    if (!convenio) throw new NotFoundException('Convenio no encontrado');
+
+    // Solo Revisor puede finalizar
+    if (rol !== 'Revisor') {
+      throw new ForbiddenException('No tienes permisos para finalizar este convenio');
+    }
+
+    convenio.activo = false;
+    return this.repo.save(convenio); // ✅ aquí guardamos correctamente
+  }
 
 
+
+// Método privado para parsear fechas
+  private parseExcelDate(value: any): Date | null {
+    if (!value) return null;
+
+    // Si ya es Date
+    if (value instanceof Date && !isNaN(value.getTime())) return value;
+
+    // Si es número (Excel date)
+    if (typeof value === 'number') {
+      // XLSX usa fechas desde 1900
+      const d = XLSX.SSF.parse_date_code(value);
+      return new Date(d.y, d.m - 1, d.d);
+    }
+
+    // Intentar parsear string
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // Función principal de importación
+async descargarPlantillaExcel(res: Response) {
+  const wsConvenio = XLSX.utils.json_to_sheet([
+    { titulo: 'Ejemplo Convenio', 
+      descripcion: 'Descripción del convenio', 
+      fechaInicio: '2025-01-01', 
+      fechaFin: '2025-12-31', 
+      creadoPorEmail: 'usuario@correo.com',
+    }
+  ]);
+
+  const wsLineasTrabajo = XLSX.utils.json_to_sheet([
+    { nombre: 'Linea 1', descripcion: 'Descripción de la línea de trabajo' }
+  ]);
+
+  const wsDimensiones = XLSX.utils.json_to_sheet([
+    { nombre: 'Gestión Pedagógica' } // 🔹 ya no tiene "lineaTrabajo"
+  ]);
+
+  const wsIndicadores = XLSX.utils.json_to_sheet([
+    { nombre: 'Indicador 1', meta: 80, evaluacion: '', consideraciones: '', dimensionNombre: 'Gestión Pedagógica', lineaTrabajo: 'Linea 1' } // 🔹 ahora acá va la linea
+  ]);
+
+  const wsTareas = XLSX.utils.json_to_sheet([
+    { descripcion: 'Tarea ejemplo', plazo: '2025-06-30', cumplimiento: '', evidencias: '', obs: '', indicadorNombre: 'Indicador 1' }
+  ]);
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, wsConvenio, 'Convenio');
+  XLSX.utils.book_append_sheet(workbook, wsLineasTrabajo, 'LineasTrabajo');
+  XLSX.utils.book_append_sheet(workbook, wsDimensiones, 'Dimensiones');
+  XLSX.utils.book_append_sheet(workbook, wsIndicadores, 'Indicadores');
+  XLSX.utils.book_append_sheet(workbook, wsTareas, 'Tareas');
+
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Disposition', 'attachment; filename=plantilla_convenio.xlsx');
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.end(buffer);
+}
+
+async importarDesdeExcel(file: Express.Multer.File) {
+  try {
+    const workbook = XLSX.read(file.buffer, { type: 'buffer' });
+
+    return await this.dataSource.transaction(async (manager) => {
+      let convenioCreado: Convenio | null = null;
+
+      // === CONVENIO ===
+      const convenioSheet = workbook.Sheets['Convenio'];
+      if (!convenioSheet) throw new Error('No se encontró la hoja "Convenio".');
+
+      const [convenioRow] = XLSX.utils.sheet_to_json<any>(convenioSheet);
+      const { titulo, descripcion, fechaInicio, fechaFin,creadoPorEmail  } = convenioRow;
+      if (!titulo || !fechaInicio || !fechaFin) throw new Error('Datos incompletos en hoja "Convenio".');
+
+      // 🔹 Buscar el usuario por email
+      let creadoPor: Usuario | null = null;
+      let establecimiento: Establecimiento | null = null;
+      if (creadoPorEmail) {
+        creadoPor = await manager.findOne(Usuario, { 
+          where: { email: creadoPorEmail },
+          relations: ['establecimiento']
+         });
+        if (!creadoPor) {
+          throw new Error(`No se encontró un usuario con el email: ${creadoPorEmail}`);
+        }
+        establecimiento = creadoPor.establecimiento || null;
+      }
+
+      convenioCreado = manager.create(Convenio, { 
+        titulo, 
+        descripcion, 
+        fechaInicio: this.parseExcelDate(fechaInicio), 
+        fechaFin: this.parseExcelDate(fechaFin), 
+        creadoPor,
+        establecimiento,
+      } as Partial<Convenio>);
+      convenioCreado = await manager.save(convenioCreado);
+
+      // === DIMENSIONES ===
+      const dimensionesSheet = workbook.Sheets['Dimensiones'];
+      const dimensionesMap = new Map<string, Dimension>();
+      if (dimensionesSheet) {
+        const dimensionesData = XLSX.utils.sheet_to_json<any>(dimensionesSheet);
+        for (const row of dimensionesData) {
+          const { nombre } = row;
+          if (!nombre) continue;
+
+          const dimension = manager.create(Dimension, { nombre, convenio: convenioCreado });
+          const saved = await manager.save(dimension);
+          dimensionesMap.set(nombre, saved);
+        }
+      }
+
+      // === INDICADORES ===
+      const indicadoresSheet = workbook.Sheets['Indicadores'];
+      const indicadoresMap = new Map<string, Indicador>();
+      if (indicadoresSheet) {
+        const indicadoresData = XLSX.utils.sheet_to_json<any>(indicadoresSheet);
+        for (const row of indicadoresData) {
+          const { nombre, meta, evaluacion, consideraciones, dimensionNombre, lineaTrabajo } = row;
+          const dimension = dimensionesMap.get(dimensionNombre);
+          if (!dimension) continue;
+
+          // 🔹 Buscar o crear la línea de trabajo
+          let linea: LineaTrabajo | null = null;
+          if (lineaTrabajo) {
+            linea = await manager.findOne(LineaTrabajo, { where: { nombre: lineaTrabajo } });
+            if (!linea) {
+              linea = manager.create(LineaTrabajo, { nombre: lineaTrabajo, descripcion: lineaTrabajo || 'Generado automáticamente' });
+              linea = await manager.save(linea);
+            }
+          }
+
+          const indicador = manager.create(Indicador, { 
+            nombre, 
+            meta: meta !== undefined && meta !== '' ? Number(meta) : null,
+            evaluacion: evaluacion !== undefined && evaluacion !== '' ? Number(evaluacion) : null,
+            consideraciones,
+            dimension,
+            lineaTrabajo: linea, // 🔹 se asocia la instancia persistida
+          } as Partial<Indicador>);
+
+          await manager.save(indicador);
+          indicadoresMap.set(nombre, indicador);
+        }
+      }
+
+      // === TAREAS ===
+      const tareasSheet = workbook.Sheets['Tareas'];
+      if (tareasSheet) {
+        const tareasData = XLSX.utils.sheet_to_json<any>(tareasSheet);
+        for (const row of tareasData) {
+          const { descripcion, plazo, cumplimiento, evidencias, obs, indicadorNombre } = row;
+          if (!descripcion || !indicadorNombre) continue;
+
+          const indicador = indicadoresMap.get(indicadorNombre);
+          if (!indicador) continue;
+
+          const tareaData: DeepPartial<Tarea> = {
+            descripcion,
+            plazo: this.parseExcelDate(plazo)?.toISOString().split('T')[0] || null,
+            cumplimiento: this.parseExcelDate(cumplimiento)?.toISOString().split('T')[0] || null,
+            evidencias,
+            obs,
+            indicador,
+          };
+
+          const tarea = manager.create(Tarea, tareaData);
+          await manager.save(tarea);
+        }
+      }
+
+      return { mensaje: 'Importación exitosa', convenioId: convenioCreado.id };
+    });
+  } catch (error) {
+    console.error('Error importando Excel:', error);
+    throw new Error(`Fallo al importar Excel: ${error.message}`);
+  }
+}
 }

@@ -12,7 +12,7 @@ export class Dimension {
   @Column()
   nombre: string;
 
-  @Column('float')
+  @Column({ type: 'float', nullable: true  })
   ponderacion: number;
 
   @ManyToOne(() => Convenio, convenio => convenio.dimensiones, { onDelete: 'CASCADE' })

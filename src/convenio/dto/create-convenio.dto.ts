@@ -17,7 +17,7 @@ export class CreateTareaDto {
   @Transform(({ value }) => value === '' ? undefined : value)
   cumplimiento?: string;
 
-
+  
   // Evidencias como archivos, se manejará por separado con multer
   // Por lo tanto, aquí podrías omitirlo o aceptar solo una ruta/URL:
   @IsOptional()
